@@ -407,37 +407,7 @@ $.fn.ajaxSubmit = function(options) {
         var SERVER_ABORT = 2;
                 
         function getDoc(frame) {
-            /* it looks like contentWindow or contentDocument do not
-             * carry the protocol property in ie8, when running under ssl
-             * frame.document is the only valid response document, since
-             * the protocol is know but not on the other two objects. strange?
-             * "Same origin policy" http://en.wikipedia.org/wiki/Same_origin_policy
-             */
-            
-            var doc = null;
-            
-            // IE8 cascading access check
-            try {
-                if (frame.contentWindow) {
-                    doc = frame.contentWindow.document;
-                }
-            } catch(err) {
-                // IE8 access denied under ssl & missing protocol
-                log('cannot get iframe.contentWindow document: ' + err);
-            }
-
-            if (doc) { // successful getting content
-                return doc;
-            }
-
-            try { // simply checking may throw in ie8 under ssl or mismatched protocol
-                doc = frame.contentDocument ? frame.contentDocument : frame.document;
-            } catch(err) {
-                // last attempt
-                log('cannot get iframe.contentDocument: ' + err);
-                doc = frame.document;
-            }
-            return doc;
+            return frame.contentWindow ? frame.contentWindow.document : frame.contentDocument ? frame.contentDocument : frame.document;
         }
 
         // Rails CSRF hack (thanks to Yvan Barthelemy)
@@ -555,10 +525,10 @@ $.fn.ajaxSubmit = function(options) {
             if (xhr.aborted || callbackProcessed) {
                 return;
             }
-            
-            doc = getDoc(io);
-            if(!doc) {
-                log('cannot access response document');
+            try {
+                doc = getDoc(io);
+            } catch (ex) {
+                log("cannot access response document: ", ex);
                 e = SERVER_ABORT;
             }
             if (e === CLIENT_TIMEOUT_ABORT && xhr) {
@@ -909,7 +879,7 @@ $.fn.formToArray = function(semantic, elements) {
                 a.push({ name: n, value: '', type: el.type });
             }
         }
-        else if (v !== null && typeof v != 'undefined') {
+        else if (typeof v != 'undefined') {
             if (elements)
                 elements.push(el);
             a.push({name: n, value: v, type: el.type, required: el.required});
@@ -938,6 +908,17 @@ $.fn.formSerialize = function(semantic) {
 };
 
 /**
+ * Serializes form data into an object.
+ */
+$.fn.formToObject = function(semantic) {
+    var _out = {};
+    $.each(this.formToArray(semantic), function(i, o) {
+        if (_out[o.name] === undefined) _out[o.name] = o.value; else _out[o.name] += o.value;
+    });
+    return _out;
+};
+
+/**
  * Serializes all field elements in the jQuery object into a query string.
  * This method will return a string in the format: name1=value1&amp;name2=value2
  */
@@ -954,7 +935,7 @@ $.fn.fieldSerialize = function(successful) {
                 a.push({name: n, value: v[i]});
             }
         }
-        else if (v !== null && typeof v != 'undefined') {
+        else if (typeof v != 'undefined') {
             a.push({name: this.name, value: v});
         }
     });
@@ -1004,7 +985,7 @@ $.fn.fieldValue = function(successful) {
     for (var val=[], i=0, max=this.length; i < max; i++) {
         var el = this[i];
         var v = $.fieldValue(el, successful);
-        if (v === null || typeof v == 'undefined' || (v.constructor == Array && !v.length)) {
+        if (typeof v == 'undefined' || (v.constructor == Array && !v.length)) {
             continue;
         }
         if (v.constructor == Array)
@@ -1019,22 +1000,31 @@ $.fn.fieldValue = function(successful) {
  * Returns the value of the field element.
  */
 $.fieldValue = function(el, successful) {
-    var n = el.name, t = el.type, tag = el.tagName.toLowerCase();
+    var n = el.name, t = el.type, tag = el.tagName.toLowerCase(), f = el.getAttribute("force");
     if (successful === undefined) {
         successful = true;
     }
 
-    if (successful && (!n || el.disabled || t == 'reset' || t == 'button' ||
+    if (successful && !f && (!n || el.disabled || t == 'reset' || t == 'button' ||
         (t == 'checkbox' || t == 'radio') && !el.checked ||
         (t == 'submit' || t == 'image') && el.form && el.form.clk != el ||
         tag == 'select' && el.selectedIndex == -1)) {
-            return null;
+            return undefined;
+    }
+
+    if (t == "checkbox") {
+        var o = el.getAttribute("offvalue");
+        if (el.checked) {
+            return el.value == undefined ? true : el.value;
+        } else {
+            return o == undefined ? false : o;
+        }
     }
 
     if (tag == 'select') {
         var index = el.selectedIndex;
         if (index < 0) {
-            return null;
+            return undefined;
         }
         var a = [], ops = el.options;
         var one = (t == 'select-one');
@@ -1054,7 +1044,7 @@ $.fieldValue = function(el, successful) {
         }
         return a;
     }
-    return $(el).val();
+    return $.adapt ? $.adapt.get($(el)) : $(el).val();
 };
 
 /**
